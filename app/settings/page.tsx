@@ -1,0 +1,3 @@
+import { AppShell } from "../../components/shell";
+import { PageHeader, Panel } from "../../components/ui";
+export default function Settings(){return <AppShell active="Settings"><PageHeader eyebrow="Workspace" title="Settings" description="Manage your InsureFlow workspace and preferences."/><div className="max-w-2xl"><Panel title="Workspace preferences"><div className="space-y-5 p-5"><label className="block text-xs font-bold">Workspace name<input className="input mt-2 !pl-3" value="Northstar Insurance" readOnly/></label><label className="block text-xs font-bold">Default review threshold<select className="input mt-2 !pl-3"><option>Medium confidence and below</option></select></label><button className="btn btn-primary">Save changes</button></div></Panel></div></AppShell>}
