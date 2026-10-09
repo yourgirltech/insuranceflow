@@ -1,0 +1,144 @@
+{
+  "name": "Insurance FNOL - Policy KB Ingestion",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "dd937b81-bb12-5d99-8db8-8b627b49df06",
+      "name": "Run Ingestion",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Replace with your own policy wording (one chunk per item), or fetch it from storage.\nconst docs = [\n {\"document_type\":\"auto_policy\",\"source\":\"PAP-2026 Section II - Collision\",\"line\":\"auto\",\"text\":\"We will pay for direct and accidental loss to your covered auto caused by collision with another object or by overturn, less the deductible shown in the Declarations. Collision coverage applies whether or not you are at fault.\"},\n {\"document_type\":\"auto_policy\",\"source\":\"PAP-2026 Section III - Comprehensive\",\"line\":\"auto\",\"text\":\"We will pay for direct and accidental loss to your covered auto not caused by collision, including fire, theft, vandalism, falling objects, hail, flood and contact with a bird or animal. Glass breakage is covered under this section.\"},\n {\"document_type\":\"auto_policy\",\"source\":\"PAP-2026 Exclusions\",\"line\":\"auto\",\"text\":\"We do not provide coverage for loss caused by wear and tear, mechanical or electrical breakdown, freezing, or road damage to tires unless damage results from a covered theft. No coverage applies while the auto is used for ride-share or delivery for hire unless the Commercial Use endorsement is attached.\"},\n {\"document_type\":\"auto_policy\",\"source\":\"PAP-2026 Duties After Loss\",\"line\":\"auto\",\"text\":\"You must give us prompt notice of the accident or loss, including how, when and where it happened. Theft or vandalism must be reported to the police within 48 hours. Failure to cooperate may result in denial of the claim.\"},\n {\"document_type\":\"home_policy\",\"source\":\"HO3-2026 Section I - Perils Insured\",\"line\":\"property\",\"text\":\"We insure the dwelling against direct physical loss unless excluded. Sudden and accidental discharge of water from a plumbing, heating or air-conditioning system is covered, including the cost of tearing out and replacing part of the building to repair the system.\"},\n {\"document_type\":\"home_policy\",\"source\":\"HO3-2026 Section I - Exclusions\",\"line\":\"property\",\"text\":\"We do not cover loss caused by flood, surface water, earth movement, gradual seepage or leakage over 14 days or more, neglect, or mold unless the mold results from a covered water loss. Wear and tear and deterioration are excluded.\"},\n {\"document_type\":\"home_policy\",\"source\":\"HO3-2026 Section I - Wind and Hail\",\"line\":\"property\",\"text\":\"Windstorm and hail damage to the roof and exterior is covered subject to the separate wind/hail deductible of 2 percent of Coverage A. Interior damage is covered only if wind or hail first creates an opening in the roof or wall.\"},\n {\"document_type\":\"claims_guideline\",\"source\":\"Claims Handling Guideline CG-7\",\"line\":\"all\",\"text\":\"Claims with estimated severity above 0.7, suspected fraud indicators, injuries, or policies with a lapse in the last 30 days must be referred to a senior adjuster. Adjusters must document the policy provision relied on for every coverage decision.\"}\n];\nreturn docs.map(d => ({ json: { ...d, tenant_id: null } }));"
+      },
+      "id": "847846b1-bfe8-55c9-b0c6-41a7ef7e7a84",
+      "name": "Policy Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: { parts: [{ text: $json.text }] }, taskType: 'RETRIEVAL_DOCUMENT', title: $json.source, outputDimensionality: 768 }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "bcf6aaf0-7582-5330-aa67-9da99913c8fa",
+      "name": "Embed Chunk (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Query Auth account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO policy_documents (tenant_id, document_type, source, line_of_business, chunk_text, embedding, active)\nVALUES (NULLIF($1, ''), $2, $3, $4, $5, $6::vector, true)\nON CONFLICT (source) DO UPDATE SET chunk_text = EXCLUDED.chunk_text, embedding = EXCLUDED.embedding, active = true, updated_at = now();",
+        "options": {
+          "queryReplacement": "={{ [ $('Policy Documents').item.json.tenant_id || '', $('Policy Documents').item.json.document_type, $('Policy Documents').item.json.source, $('Policy Documents').item.json.line, $('Policy Documents').item.json.text, '[' + $json.embedding.values.join(',') + ']' ] }}"
+        }
+      },
+      "id": "789549ae-6a96-5d1e-8e37-2ca326553606",
+      "name": "Upsert Chunk (pgvector)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Policy KB Ingestion\nEmbeds policy wording with Gemini (gemini-embedding-001, 768 dims) and upserts it into `policy_documents` (pgvector). Run once after applying `supabase/schema.sql`, and again whenever policy wording changes.",
+        "height": 200,
+        "width": 420,
+        "color": 4
+      },
+      "id": "dd29eddc-7a89-5f0a-b97a-f9fb33699cd2",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        60
+      ]
+    }
+  ],
+  "connections": {
+    "Run Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Policy Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Documents": {
+      "main": [
+        [
+          {
+            "node": "Embed Chunk (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Chunk (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Upsert Chunk (pgvector)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
