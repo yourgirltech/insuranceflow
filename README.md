@@ -2,6 +2,8 @@
 
 An insurance operations platform: a Next.js + Supabase workspace for policyholders, claims, underwriting and documents, plus an **n8n claims pipeline** that takes a First Notice of Loss (FNOL) from intake to an adjuster decision. AI makes a recommendation, and a human always makes the decision.
 
+> **In production for a client.** The live system runs on the client's own domain and isn't linked here. This repository is the build record: the full source, with client data, credentials and URLs removed.
+
 ## FNOL & claims pipeline (n8n)
 
 ```
@@ -28,7 +30,7 @@ POST /webhook/fnol-intake
 |---|---|
 | `n8n/insurance-fnol-claims-pipeline.json` | The FNOL pipeline (26 nodes) |
 | `n8n/policy-kb-ingestion.json` | Embeds policy wording (`gemini-embedding-001`, 768 dims) into pgvector |
-| `supabase/schema.sql` | `policies`, `claims`, `policy_documents` (pgvector + HNSW), RLS, demo policies |
+| `supabase/schema.sql` | `policies`, `claims`, `policy_documents` (pgvector + HNSW), RLS, sample policies |
 
 ### Run it
 
@@ -59,7 +61,7 @@ cp .env.example .env.local   # add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPA
 npm install && npm run dev
 ```
 
-The UI pages currently render demo data. The pipeline above writes real claims to the `claims` table, and wiring the claims page to it is next.
+In this repository the UI pages render sample data, so the code can be shared without client records. The pipeline writes claims to the `claims` table that the production deployment reads.
 
 ## Security
 
