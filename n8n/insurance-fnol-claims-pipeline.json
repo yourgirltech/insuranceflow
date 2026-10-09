@@ -1,0 +1,1115 @@
+{
+  "name": "Insurance FNOL & Claims Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fnol-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "62caa13a-c3d6-53d9-9a22-9723a12600c3",
+      "name": "FNOL Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "fnol-intake"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "fromEmail",
+              "value": "claims@your-domain.com",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "adjusterEmail",
+              "value": "adjuster@your-domain.com",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "seniorAdjusterEmail",
+              "value": "claims@your-domain.com",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "chatModel",
+              "value": "gemini-2.5-flash",
+              "type": "string"
+            },
+            {
+              "id": "5",
+              "name": "embeddingModel",
+              "value": "gemini-embedding-001",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "autoRouteConfidence",
+              "value": 0.7,
+              "type": "number"
+            },
+            {
+              "id": "7",
+              "name": "approvalTimeoutHours",
+              "value": 48,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8006f189-6fbc-5c3e-84f4-16e2aa2305a7",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $('FNOL Intake Webhook').first().json.body || {};\nconst str = v => (v === undefined || v === null) ? '' : String(v).trim();\nconst errors = [];\nconst policyNumber = str(b.policyNumber);\nconst incidentDescription = str(b.incidentDescription);\nconst policyholderEmail = str(b.policyholderEmail).toLowerCase();\nif (!policyNumber) errors.push('policyNumber is required');\nif (incidentDescription.length < 10) errors.push('incidentDescription must be at least 10 characters');\nif (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(policyholderEmail)) errors.push('policyholderEmail must be a valid email');\nconst photos = (Array.isArray(b.photos) ? b.photos : [])\n  .map(str).filter(u => /^https:\\/\\//i.test(u)).slice(0, 4);\nconst rand = Math.random().toString(36).slice(2, 7).toUpperCase();\nreturn [{ json: {\n  valid: errors.length === 0,\n  errors,\n  claimRef: `CLM-${$now.toFormat('yyyyMMdd')}-${rand}`,\n  policyNumber,\n  incidentDescription: incidentDescription.slice(0, 4000),\n  incidentDate: str(b.incidentDate),\n  policyholderEmail,\n  policyholderPhone: str(b.policyholderPhone),\n  photos,\n  lineOfBusiness: str(b.lineOfBusiness) || 'unspecified',\n  tenantId: str(b.tenantId),\n} }];"
+      },
+      "id": "c48d6d7b-e3f5-505a-96b8-3cafabbf5d53",
+      "name": "Validate & Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "42606c52-7ac7-54b5-9484-147940d560fa",
+      "name": "IF Valid Intake",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, errors: $json.errors }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "b9fbc007-ba38-5652-8bb4-e6d9684d88ec",
+      "name": "Respond 400 - Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, claimRef: $json.claimRef, status: 'received', message: 'Claim received and queued for adjuster review.' }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "91595508-66f2-58e0-8814-a9f5142f420d",
+      "name": "Respond 202 - Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "policies",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "policy_number",
+              "condition": "eq",
+              "keyValue": "={{ $('Validate & Normalize').first().json.policyNumber }}"
+            }
+          ]
+        }
+      },
+      "id": "a8e1a32c-0dab-5331-b4b7-1b696fa0cf82",
+      "name": "Policy Lookup (Supabase)",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        100
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase account 2"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $('Config').first().json.embeddingModel }}:embedContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: { parts: [{ text: $('Validate & Normalize').first().json.incidentDescription }] }, taskType: 'RETRIEVAL_QUERY', outputDimensionality: 768 }) }}",
+        "options": {}
+      },
+      "id": "4104e5ce-f8bc-5536-afd6-4babbcd17778",
+      "name": "Generate Query Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Query Auth account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT chunk_text, document_type, source, 1 - (embedding <=> $2::vector) AS similarity\nFROM policy_documents\nWHERE active = true AND (tenant_id = $1 OR tenant_id IS NULL)\nORDER BY embedding <=> $2::vector\nLIMIT 6;",
+        "options": {
+          "queryReplacement": "={{ [ $('Validate & Normalize').first().json.tenantId, '[' + $json.embedding.values.join(',') + ']' ] }}"
+        }
+      },
+      "id": "d4602ab9-b5a3-5458-b866-802e41294818",
+      "name": "Vector Search - Policy KB (pgvector)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep only chunks that are actually relevant; an empty KB must not crash the run.\nconst rows = $input.all().map(i => i.json).filter(r => r.chunk_text && Number(r.similarity) >= 0.35);\nconst contextText = rows.map((r, idx) =>\n  `[${idx + 1}] (${r.document_type}, source: ${r.source}, similarity ${Number(r.similarity).toFixed(2)})\\n${r.chunk_text}`\n).join('\\n\\n');\nreturn [{ json: {\n  retrievedContext: contextText || 'NO RELEVANT POLICY LANGUAGE FOUND.',\n  chunkCount: rows.length,\n  sources: [...new Set(rows.map(r => r.source))],\n} }];"
+      },
+      "id": "3710c221-6e4c-5d09-8be8-cab8221cc301",
+      "name": "Assemble RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input2"
+      },
+      "id": "dac0bde0-864e-5f5e-9ab1-1e2f81e7fe68",
+      "name": "Merge Policy + RAG Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1760,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $('Config').first().json.chatModel }}:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const policy = $('Policy Lookup (Supabase)').first().json; const rag = $('Assemble RAG Context').first().json; const intake = $('Validate & Normalize').first().json; return JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `You are an insurance coverage-check assistant. You never make final decisions; a human adjuster reviews every claim.\\n\\nSTRUCTURED POLICY RECORD (empty means no policy was found):\\n${JSON.stringify(policy)}\\n\\nRETRIEVED POLICY LANGUAGE:\\n${rag.retrievedContext}\\n\\nCLAIM\\nLine of business: ${intake.lineOfBusiness}\\nIncident date: ${intake.incidentDate || 'not given'}\\nDescription: ${intake.incidentDescription}\\n\\nRules: base the determination on the retrieved policy language; use the structured record only for status, dates and limits. If the policy is missing, not active, or the retrieved language does not clearly address the incident, answer needs_review. Cite sources only by the source names shown in the retrieved language.\\nReturn JSON: {\\\"coverage_status\\\": \\\"covered\\\"|\\\"needs_review\\\"|\\\"denied\\\", \\\"confidence\\\": number 0-1, \\\"reasoning\\\": string (max 2 sentences), \\\"cited_sources\\\": string[]}` }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } }); })() }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "9518c0ec-b432-5b3a-8c80-92282d04bea6",
+      "name": "Coverage Check (Gemini + RAG)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        200
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Query Auth account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deterministic guardrails around the model output: never trust it blindly.\nconst cfg = $('Config').first().json;\nconst policy = $('Policy Lookup (Supabase)').first().json || {};\nconst rag = $('Assemble RAG Context').first().json;\nconst raw = $input.first().json?.candidates?.[0]?.content?.parts?.[0]?.text || '';\nlet p;\ntry { p = JSON.parse(raw.replace(/```json|```/g, '').trim()); } catch (e) { p = null; }\nconst allowed = ['covered', 'needs_review', 'denied'];\nlet status = p && allowed.includes(p.coverage_status) ? p.coverage_status : 'needs_review';\nlet confidence = p ? Math.min(1, Math.max(0, Number(p.confidence) || 0)) : 0;\nlet reasoning = p?.reasoning ? String(p.reasoning).slice(0, 600) : 'Model output missing or unparseable; routed to human review.';\nconst cited = (Array.isArray(p?.cited_sources) ? p.cited_sources : []).filter(s => rag.sources.includes(s));\nconst flags = [];\nif (!policy.policy_number) flags.push('policy_not_found');\nelse if (String(policy.status || '').toLowerCase() !== 'active') flags.push('policy_not_active');\nif (rag.chunkCount === 0) flags.push('no_policy_language_retrieved');\nif (confidence < cfg.autoRouteConfidence) flags.push('low_confidence');\nif (flags.length && status !== 'needs_review') {\n  reasoning = `${reasoning} [Downgraded to needs_review: ${flags.join(', ')}]`;\n  status = 'needs_review';\n}\nreturn [{ json: { coverage_status: status, confidence, reasoning, cited_sources: cited, risk_flags: flags } }];"
+      },
+      "id": "2a6a5148-4017-5630-aa52-c0b6e574b190",
+      "name": "Parse Coverage Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "photos-check",
+              "leftValue": "={{ $('Validate & Normalize').first().json.photos.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "99ae4193-d647-5484-b0e6-aa2881c10b2c",
+      "name": "IF Has Photos",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $('Config').first().json.chatModel }}:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ role: 'user', parts: [ { text: 'Assess the vehicle or property damage shown in these claim photos. Return JSON: {\"damage_score\": number 0-1 where 1 is total loss, \"summary\": string (max 2 sentences)}. If the images do not show damage, say so and use a low score.' }, ...($('Validate & Normalize').first().json.photos.map(url => ({ file_data: { file_uri: url, mime_type: /\\.png($|\\?)/i.test(url) ? 'image/png' : 'image/jpeg' } }))) ] }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } }) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "d13ccca4-5fe8-5889-8cd7-44cc93836f38",
+      "name": "Damage Assessment (Gemini Vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        100
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "",
+          "name": "Query Auth account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json?.candidates?.[0]?.content?.parts?.[0]?.text || '';\nlet p = null;\ntry { p = JSON.parse(raw.replace(/```json|```/g, '').trim()); } catch (e) {}\nconst score = p && p.damage_score !== undefined ? Math.min(1, Math.max(0, Number(p.damage_score) || 0)) : null;\nreturn [{ json: {\n  damage_score: score,\n  summary: p?.summary ? String(p.summary).slice(0, 600) : 'Photo assessment failed; adjuster should review photos manually.',\n} }];"
+      },
+      "id": "f281484d-a9aa-5bfa-b76e-5a17b5d6a2ac",
+      "name": "Parse Damage Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "damage_score",
+              "value": null,
+              "type": "number"
+            },
+            {
+              "id": "2",
+              "name": "summary",
+              "value": "No photos submitted",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "59a4bf77-d5ee-507b-bb5e-77b5f9220c7b",
+      "name": "Set Default Damage",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "claimRef",
+              "value": "={{ $('Validate & Normalize').first().json.claimRef }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "tenantId",
+              "value": "={{ $('Validate & Normalize').first().json.tenantId }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "policyNumber",
+              "value": "={{ $('Validate & Normalize').first().json.policyNumber }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "policyholderEmail",
+              "value": "={{ $('Validate & Normalize').first().json.policyholderEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "5",
+              "name": "incidentDescription",
+              "value": "={{ $('Validate & Normalize').first().json.incidentDescription }}",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "incidentDate",
+              "value": "={{ $('Validate & Normalize').first().json.incidentDate }}",
+              "type": "string"
+            },
+            {
+              "id": "7",
+              "name": "lineOfBusiness",
+              "value": "={{ $('Validate & Normalize').first().json.lineOfBusiness }}",
+              "type": "string"
+            },
+            {
+              "id": "8",
+              "name": "coverage_status",
+              "value": "={{ $('Parse Coverage Response').first().json.coverage_status }}",
+              "type": "string"
+            },
+            {
+              "id": "9",
+              "name": "confidence",
+              "value": "={{ $('Parse Coverage Response').first().json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "10",
+              "name": "reasoning",
+              "value": "={{ $('Parse Coverage Response').first().json.reasoning }}",
+              "type": "string"
+            },
+            {
+              "id": "11",
+              "name": "cited_sources",
+              "value": "={{ $('Parse Coverage Response').first().json.cited_sources }}",
+              "type": "array"
+            },
+            {
+              "id": "12",
+              "name": "risk_flags",
+              "value": "={{ $('Parse Coverage Response').first().json.risk_flags }}",
+              "type": "array"
+            },
+            {
+              "id": "13",
+              "name": "damage_score",
+              "value": "={{ $json.damage_score }}",
+              "type": "number"
+            },
+            {
+              "id": "14",
+              "name": "damage_summary",
+              "value": "={{ $json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "15",
+              "name": "submittedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "42005efb-ace8-5af2-b6c0-4e28164beddc",
+      "name": "Assemble Claim Packet",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "tableId": "claims",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "claim_ref",
+              "fieldValue": "={{ $json.claimRef }}"
+            },
+            {
+              "fieldId": "tenant_id",
+              "fieldValue": "={{ $json.tenantId }}"
+            },
+            {
+              "fieldId": "policy_number",
+              "fieldValue": "={{ $json.policyNumber }}"
+            },
+            {
+              "fieldId": "policyholder_email",
+              "fieldValue": "={{ $json.policyholderEmail }}"
+            },
+            {
+              "fieldId": "incident_description",
+              "fieldValue": "={{ $json.incidentDescription }}"
+            },
+            {
+              "fieldId": "line_of_business",
+              "fieldValue": "={{ $json.lineOfBusiness }}"
+            },
+            {
+              "fieldId": "coverage_status",
+              "fieldValue": "={{ $json.coverage_status }}"
+            },
+            {
+              "fieldId": "confidence",
+              "fieldValue": "={{ $json.confidence }}"
+            },
+            {
+              "fieldId": "reasoning",
+              "fieldValue": "={{ $json.reasoning }}"
+            },
+            {
+              "fieldId": "damage_score",
+              "fieldValue": "={{ $json.damage_score }}"
+            },
+            {
+              "fieldId": "damage_summary",
+              "fieldValue": "={{ $json.damage_summary }}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $json.submittedAt }}"
+            },
+            {
+              "fieldId": "cited_sources",
+              "fieldValue": "={{ JSON.stringify($json.cited_sources) }}"
+            },
+            {
+              "fieldId": "risk_flags",
+              "fieldValue": "={{ JSON.stringify($json.risk_flags) }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "pending_review"
+            }
+          ]
+        }
+      },
+      "id": "ad315c46-1399-5a65-ba8c-4509ad671e9d",
+      "name": "Save Claim - Pending Review",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3300,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "fromEmail": "={{ $('Config').first().json.fromEmail }}",
+        "toEmail": "={{ $('Config').first().json.adjusterEmail }}",
+        "subject": "=[{{ $('Assemble Claim Packet').first().json.coverage_status }}] Claim {{ $('Assemble Claim Packet').first().json.claimRef }} needs review (policy {{ $('Assemble Claim Packet').first().json.policyNumber }})",
+        "message": "=<b>Claim:</b> {{ $('Assemble Claim Packet').first().json.claimRef }}<br><b>Policy:</b> {{ $('Assemble Claim Packet').first().json.policyNumber }} ({{ $('Assemble Claim Packet').first().json.lineOfBusiness }})<br><b>AI coverage view:</b> {{ $('Assemble Claim Packet').first().json.coverage_status }} (confidence {{ $('Assemble Claim Packet').first().json.confidence }})<br><b>Reasoning:</b> {{ $('Assemble Claim Packet').first().json.reasoning }}<br><b>Cited policy sources:</b> {{ $('Assemble Claim Packet').first().json.cited_sources.join(', ') || 'none' }}<br><b>Risk flags:</b> {{ $('Assemble Claim Packet').first().json.risk_flags.join(', ') || 'none' }}<br><b>Damage:</b> {{ $('Assemble Claim Packet').first().json.damage_score ?? 'n/a' }} - {{ $('Assemble Claim Packet').first().json.damage_summary }}<br><br><b>Incident:</b> {{ $('Assemble Claim Packet').first().json.incidentDescription }}<br><br><i>No response within {{ $('Config').first().json.approvalTimeoutHours }}h escalates to a senior adjuster.</i>",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "Approve Claim",
+            "disapproveLabel": "Flag for Senior Review"
+          }
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "limitType": "afterTimeInterval",
+              "resumeAmount": "={{ $('Config').first().json.approvalTimeoutHours }}",
+              "resumeUnit": "hours"
+            }
+          }
+        }
+      },
+      "id": "7427f227-7a9a-5dd0-a233-1800f7068f73",
+      "name": "Send and Wait - Adjuster Approval",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3520,
+        200
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP account"
+        }
+      },
+      "webhookId": "3e2532e8-443c-5aad-99cf-36c9d227c4ad"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "approved-check",
+              "leftValue": "={{ $json.data?.approved === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7591d1d3-3072-510c-89fa-4986c1a11176",
+      "name": "IF Approved",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "claims",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "claim_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Assemble Claim Packet').first().json.claimRef }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "approved"
+            },
+            {
+              "fieldId": "reviewed_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      },
+      "id": "2b885387-8b7e-51f6-a93a-bf49a67a0970",
+      "name": "Update Claim - Approved",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3960,
+        100
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Config').first().json.fromEmail }}",
+        "toEmail": "={{ $('Assemble Claim Packet').first().json.policyholderEmail }}",
+        "subject": "=Your claim {{ $('Assemble Claim Packet').first().json.claimRef }} has been approved",
+        "emailFormat": "text",
+        "text": "=Your claim {{ $('Assemble Claim Packet').first().json.claimRef }} for policy {{ $('Assemble Claim Packet').first().json.policyNumber }} has been reviewed and approved by an adjuster. Our team will follow up with next steps shortly.",
+        "options": {}
+      },
+      "id": "a54d166e-7b3a-5059-ba2f-98af9b0b7c8a",
+      "name": "Email Confirmation to Policyholder",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        4180,
+        100
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "claims",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "claim_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Assemble Claim Packet').first().json.claimRef }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "flagged_for_senior_review"
+            },
+            {
+              "fieldId": "reviewed_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      },
+      "id": "cf024bbe-1c21-50a4-b707-617340003e47",
+      "name": "Update Claim - Senior Review",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3960,
+        320
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Config').first().json.fromEmail }}",
+        "toEmail": "={{ $('Config').first().json.seniorAdjusterEmail }}",
+        "subject": "=Escalation: claim {{ $('Assemble Claim Packet').first().json.claimRef }} (policy {{ $('Assemble Claim Packet').first().json.policyNumber }}) needs senior review",
+        "emailFormat": "text",
+        "text": "=The adjuster flagged this claim, or did not respond in time.\n\nAI coverage view: {{ $('Assemble Claim Packet').first().json.coverage_status }} (confidence {{ $('Assemble Claim Packet').first().json.confidence }})\nReasoning: {{ $('Assemble Claim Packet').first().json.reasoning }}\nRisk flags: {{ $('Assemble Claim Packet').first().json.risk_flags.join(', ') || 'none' }}\nIncident: {{ $('Assemble Claim Packet').first().json.incidentDescription }}",
+        "options": {}
+      },
+      "id": "3fe792a5-61fd-56bb-bd27-05eb9fcd5526",
+      "name": "Email Escalation to Senior Adjuster",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        4180,
+        320
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Insurance FNOL & Claims Pipeline\nWebhook intake -> validation -> policy lookup + RAG over policy wording (pgvector) -> Gemini coverage check with deterministic guardrails -> optional photo damage assessment -> claim saved as pending_review -> adjuster approves by email (timeout escalates) -> status update + notifications.\n\nThe AI never approves or denies on its own. Set your addresses in **Config**. Load the knowledge base first with the *Policy KB Ingestion* workflow.",
+        "height": 260,
+        "width": 520,
+        "color": 4
+      },
+      "id": "bcfcb233-ad9a-57ea-83cf-44dafe37032b",
+      "name": "Sticky Note - About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -60
+      ]
+    }
+  ],
+  "connections": {
+    "FNOL Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Normalize": {
+      "main": [
+        [
+          {
+            "node": "IF Valid Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Valid Intake": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 - Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 - Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 - Accepted": {
+      "main": [
+        [
+          {
+            "node": "Policy Lookup (Supabase)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Lookup (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Merge Policy + RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Vector Search - Policy KB (pgvector)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Search - Policy KB (pgvector)": {
+      "main": [
+        [
+          {
+            "node": "Assemble RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble RAG Context": {
+      "main": [
+        [
+          {
+            "node": "Merge Policy + RAG Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Policy + RAG Context": {
+      "main": [
+        [
+          {
+            "node": "Coverage Check (Gemini + RAG)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coverage Check (Gemini + RAG)": {
+      "main": [
+        [
+          {
+            "node": "Parse Coverage Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Coverage Response": {
+      "main": [
+        [
+          {
+            "node": "IF Has Photos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Photos": {
+      "main": [
+        [
+          {
+            "node": "Damage Assessment (Gemini Vision)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Default Damage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Damage Assessment (Gemini Vision)": {
+      "main": [
+        [
+          {
+            "node": "Parse Damage Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Damage Response": {
+      "main": [
+        [
+          {
+            "node": "Assemble Claim Packet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Default Damage": {
+      "main": [
+        [
+          {
+            "node": "Assemble Claim Packet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Claim Packet": {
+      "main": [
+        [
+          {
+            "node": "Save Claim - Pending Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Claim - Pending Review": {
+      "main": [
+        [
+          {
+            "node": "Send and Wait - Adjuster Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send and Wait - Adjuster Approval": {
+      "main": [
+        [
+          {
+            "node": "IF Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Approved": {
+      "main": [
+        [
+          {
+            "node": "Update Claim - Approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Claim - Senior Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Claim - Approved": {
+      "main": [
+        [
+          {
+            "node": "Email Confirmation to Policyholder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Claim - Senior Review": {
+      "main": [
+        [
+          {
+            "node": "Email Escalation to Senior Adjuster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  }
+}
