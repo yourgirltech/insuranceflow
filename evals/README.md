@@ -32,6 +32,7 @@ npm run eval -- --only injection,policy_status
 npm run eval -- --kb client-wording.json   # evaluate against a client's real policy wording
 npm run eval -- --replay evals/runs/<id>/results.jsonl   # re-score without API calls
 npm run eval:test                    # offline tests of the harness itself
+node evals/batch.mjs                 # next 18 pending cases, for a daily free-tier quota; re-scores all clean answers into evals/runs/cumulative/
 ```
 
 Each run writes `evals/runs/<run_id>/` with `report.md`, `summary.json`, `results.jsonl` (the full trace per claim) and `meta.json`. The command exits non-zero if a gate in `thresholds.json` fails, so it can run in CI before a workflow change ships. Embeddings are cached in `evals/.cache/`, so repeat runs only pay for coverage calls.
