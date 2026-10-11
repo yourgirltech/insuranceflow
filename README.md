@@ -52,6 +52,10 @@ curl -X POST http://localhost:5678/webhook/fnol-intake \
 
 Try `PAP-100871` (a lapsed policy) to watch the guardrails force `needs_review`.
 
+### Evals
+
+`npm run eval` runs a 60-claim golden set through the workflow's own code and scores verdicts, unsafe approvals, retrieval, citations, guardrails and prompt-injection handling. See [`evals/README.md`](evals/README.md).
+
 ## Web app
 
 Next.js 15 (App Router), React 19, Tailwind and Supabase JS. The pages are dashboard, policyholders, claims, underwriting, documents, reports, an AI chat assistant and settings.
