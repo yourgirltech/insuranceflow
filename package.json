@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "eval": "node evals/run.mjs",
+    "eval:test": "node --test \"evals/test/*.test.mjs\""
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",

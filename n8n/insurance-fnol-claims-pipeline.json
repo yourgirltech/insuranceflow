@@ -216,7 +216,8 @@
       },
       "retryOnFail": true,
       "maxTries": 3,
-      "waitBetweenTries": 2000
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -240,7 +241,8 @@
           "name": "Postgres account"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -277,7 +279,7 @@
         "genericAuthType": "httpQueryAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ (() => { const policy = $('Policy Lookup (Supabase)').first().json; const rag = $('Assemble RAG Context').first().json; const intake = $('Validate & Normalize').first().json; return JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `You are an insurance coverage-check assistant. You never make final decisions; a human adjuster reviews every claim.\\n\\nSTRUCTURED POLICY RECORD (empty means no policy was found):\\n${JSON.stringify(policy)}\\n\\nRETRIEVED POLICY LANGUAGE:\\n${rag.retrievedContext}\\n\\nCLAIM\\nLine of business: ${intake.lineOfBusiness}\\nIncident date: ${intake.incidentDate || 'not given'}\\nDescription: ${intake.incidentDescription}\\n\\nRules: base the determination on the retrieved policy language; use the structured record only for status, dates and limits. If the policy is missing, not active, or the retrieved language does not clearly address the incident, answer needs_review. Cite sources only by the source names shown in the retrieved language.\\nReturn JSON: {\\\"coverage_status\\\": \\\"covered\\\"|\\\"needs_review\\\"|\\\"denied\\\", \\\"confidence\\\": number 0-1, \\\"reasoning\\\": string (max 2 sentences), \\\"cited_sources\\\": string[]}` }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } }); })() }}",
+        "jsonBody": "={{ (() => { const found = $('Policy Lookup (Supabase)').first().json; const tid = $('Validate & Normalize').first().json.tenantId; const policy = (tid && found.tenant_id && found.tenant_id !== tid) ? {} : found; const rag = $('Assemble RAG Context').first().json; const intake = $('Validate & Normalize').first().json; return JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `You are an insurance coverage-check assistant. You never make final decisions; a human adjuster reviews every claim.\\n\\nSTRUCTURED POLICY RECORD (empty means no policy was found):\\n${JSON.stringify(policy)}\\n\\nRETRIEVED POLICY LANGUAGE:\\n${rag.retrievedContext}\\n\\nCLAIM\\nLine of business: ${intake.lineOfBusiness}\\nIncident date: ${intake.incidentDate || 'not given'}\\nDescription: ${intake.incidentDescription}\\n\\nRules: base the determination on the retrieved policy language; use the structured record only for status, dates and limits. If the policy is missing, not active, or the retrieved language does not clearly address the incident, answer needs_review. Cite sources only by the source names shown in the retrieved language.\\nReturn JSON: {\\\"coverage_status\\\": \\\"covered\\\"|\\\"needs_review\\\"|\\\"denied\\\", \\\"confidence\\\": number 0-1, \\\"reasoning\\\": string (max 2 sentences), \\\"cited_sources\\\": string[]}` }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } }); })() }}",
         "options": {
           "timeout": 60000
         }
@@ -303,7 +305,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Deterministic guardrails around the model output: never trust it blindly.\nconst cfg = $('Config').first().json;\nconst policy = $('Policy Lookup (Supabase)').first().json || {};\nconst rag = $('Assemble RAG Context').first().json;\nconst raw = $input.first().json?.candidates?.[0]?.content?.parts?.[0]?.text || '';\nlet p;\ntry { p = JSON.parse(raw.replace(/```json|```/g, '').trim()); } catch (e) { p = null; }\nconst allowed = ['covered', 'needs_review', 'denied'];\nlet status = p && allowed.includes(p.coverage_status) ? p.coverage_status : 'needs_review';\nlet confidence = p ? Math.min(1, Math.max(0, Number(p.confidence) || 0)) : 0;\nlet reasoning = p?.reasoning ? String(p.reasoning).slice(0, 600) : 'Model output missing or unparseable; routed to human review.';\nconst cited = (Array.isArray(p?.cited_sources) ? p.cited_sources : []).filter(s => rag.sources.includes(s));\nconst flags = [];\nif (!policy.policy_number) flags.push('policy_not_found');\nelse if (String(policy.status || '').toLowerCase() !== 'active') flags.push('policy_not_active');\nif (rag.chunkCount === 0) flags.push('no_policy_language_retrieved');\nif (confidence < cfg.autoRouteConfidence) flags.push('low_confidence');\nif (flags.length && status !== 'needs_review') {\n  reasoning = `${reasoning} [Downgraded to needs_review: ${flags.join(', ')}]`;\n  status = 'needs_review';\n}\nreturn [{ json: { coverage_status: status, confidence, reasoning, cited_sources: cited, risk_flags: flags } }];"
+        "jsCode": "// Deterministic guardrails around the model output: never trust it blindly.\nconst cfg = $('Config').first().json;\nconst found = $('Policy Lookup (Supabase)').first().json || {};\nconst tenantId = $('Validate & Normalize').first().json.tenantId;\n// The lookup matches on policy number only, so a policy owned by another tenant counts as not found.\nconst policy = (tenantId && found.tenant_id && found.tenant_id !== tenantId) ? {} : found;\nconst rag = $('Assemble RAG Context').first().json;\nconst raw = $input.first().json?.candidates?.[0]?.content?.parts?.[0]?.text || '';\nlet p;\ntry { p = JSON.parse(raw.replace(/```json|```/g, '').trim()); } catch (e) { p = null; }\nconst allowed = ['covered', 'needs_review', 'denied'];\nlet status = p && allowed.includes(p.coverage_status) ? p.coverage_status : 'needs_review';\nlet confidence = p ? Math.min(1, Math.max(0, Number(p.confidence) || 0)) : 0;\nlet reasoning = p?.reasoning ? String(p.reasoning).slice(0, 600) : 'Model output missing or unparseable; routed to human review.';\nconst cited = (Array.isArray(p?.cited_sources) ? p.cited_sources : []).filter(s => rag.sources.includes(s));\nconst flags = [];\nif (!policy.policy_number) flags.push('policy_not_found');\nelse if (String(policy.status || '').toLowerCase() !== 'active') flags.push('policy_not_active');\nif (rag.chunkCount === 0) flags.push('no_policy_language_retrieved');\nif (confidence < cfg.autoRouteConfidence) flags.push('low_confidence');\nif (flags.length && status !== 'needs_review') {\n  reasoning = `${reasoning} [Downgraded to needs_review: ${flags.join(', ')}]`;\n  status = 'needs_review';\n}\nreturn [{ json: { coverage_status: status, confidence, reasoning, cited_sources: cited, risk_flags: flags } }];"
       },
       "id": "2a6a5148-4017-5630-aa52-c0b6e574b190",
       "name": "Parse Coverage Response",
